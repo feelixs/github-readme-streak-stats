@@ -1,0 +1,53 @@
+name: upstream check
+
+on:
+  schedule:
+    - cron: '0 9 * * *'  # daily at 9am UTC
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Check if vercel branch is behind upstream
+        id: compare
+        run: |
+          RESPONSE=$(curl -s \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/feelixs/github-readme-streak-stats/compare/vercel...DenverCoder1:vercel")
+          BEHIND=$(echo "$RESPONSE" | jq '.ahead_by')
+          echo "behind_by=$BEHIND" >> "$GITHUB_OUTPUT"
+          echo "vercel branch is behind upstream by $BEHIND commit(s)"
+
+      - name: Open issue if behind
+        if: steps.compare.outputs.behind_by != '0' && steps.compare.outputs.behind_by != ''
+        uses: actions/github-script@v7
+        env:
+          BEHIND_BY: ${{ steps.compare.outputs.behind_by }}
+        with:
+          script: |
+            const behind = parseInt(process.env.BEHIND_BY, 10);
+            const title = `vercel branch is ${behind} commit(s) behind upstream`;
+
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'upstream-sync',
+            });
+
+            if (issues.length > 0) {
+              console.log('Issue already open, skipping.');
+              return;
+            }
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body: `The \`vercel\` branch on [feelixs/github-readme-streak-stats](https://github.com/feelixs/github-readme-streak-stats/tree/vercel) is **${behind} commit(s)** behind [DenverCoder1/github-readme-streak-stats:vercel](https://github.com/DenverCoder1/github-readme-streak-stats/tree/vercel).\n\n[View diff](https://github.com/feelixs/github-readme-streak-stats/compare/vercel...DenverCoder1:github-readme-streak-stats:vercel)`,
+              labels: ['upstream-sync'],
+            });
